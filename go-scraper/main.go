@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 	"strings"
-	"github.com/PuerkitoBio/goquery",
+	"github.com/PuerkitoBio/goquery"
 	"sync"
 )
 
@@ -48,6 +48,9 @@ func fetchTitle(ctx context.Context, url string) (string, error) {
 }
 
 func main (){
+	// Start timing the entire operation
+	startTime := time.Now()
+	
 	urls := []string{
 		"https://www.amazon.com/",
 		"https://www.example.com",
@@ -60,13 +63,17 @@ func main (){
 		"https://www.wikipedia.org",
 	}
 
+	fmt.Printf("Starting to fetch titles for %d URLs...\n", len(urls))
+
 	// create wait group for goroutines
 	var wg sync.WaitGroup
 
-	
 	// create a context with timeout
-    ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
+
+	// create a channel to receive results
+	results := make(chan string)
 
 	for _, url := range urls{
 		// add 1 to the wait group
@@ -78,18 +85,30 @@ func main (){
 				fmt.Printf("Error fetching title for %s: %v\n", url, err)
 				return
 			}
-			fmt.Printf("Title for %s: %s\n", url, title)
+			results <- title
 		}(url) // pass the url to the goroutine to execute function
 	}
-	
-	// block until all goroutines are done
-	wg.Wait()
-	title, err := fetchTitle(ctx, "https://example.com")
-
-	if err != nil {
-		panic(err)
+	// close the channel when all goroutines are done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+    
+	collectedTitles := []string{}
+	// iterate over the channel and collect results until it is closed (when all goroutines are done)
+	for title := range results {
+		collectedTitles = append(collectedTitles, title)
 	}
 
-	fmt.Println("Title: ", title)
+	fmt.Println("Collected Titles: ", collectedTitles)
 
+	// Calculate and display timing
+	elapsed := time.Since(startTime)
+	
+	fmt.Printf("\n=== TIMING RESULTS ===\n")
+	fmt.Printf("Total URLs processed: %d\n", len(urls))
+	fmt.Printf("Successful fetches: %d\n", len(collectedTitles))
+	fmt.Printf("Total time elapsed: %v\n", elapsed)
+	fmt.Printf("Average time per URL: %v\n", elapsed/time.Duration(len(urls)))
+	fmt.Printf("URLs per second: %.2f\n", float64(len(urls))/elapsed.Seconds())
 }
