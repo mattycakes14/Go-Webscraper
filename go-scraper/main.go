@@ -142,31 +142,18 @@ func main (){
 	startTime := time.Now()
 	
 	urls := []string{
-		"https://www.wikipedia.org",
-		"https://www.wikimedia.org",
-		"https://www.bbc.com",
-		"https://www.cnn.com",
-		"https://www.reuters.com",
-		"https://www.npr.org",
-		"https://www.nytimes.com",
-		"https://www.theguardian.com",
-		"https://www.forbes.com",
-		"https://www.bloomberg.com",
-		"https://www.ft.com",
-		"https://www.aljazeera.com",
-		"https://www.ap.org",
-		"https://www.nationalgeographic.com",
-		"https://www.scientificamerican.com",
-		"https://www.nature.com",
-		"https://www.sciencenews.org",
-		"https://www.space.com",
-		"https://www.si.edu",
-		"https://www.loc.gov",
-		"https://www.imdb.com",
-		"https://www.rottentomatoes.com",
-		"https://www.metacritic.com",
-		"https://www.allmusic.com",
+		"https://www.mckinsey.com/capabilities/mckinsey-digital/our-insights/the-top-trends-in-tech",
+		"https://www.weforum.org/stories/2025/06/top-10-emerging-technologies-of-2025/",
+		"https://www.simplilearn.com/top-technology-trends-and-jobs-article",
+		"https://www.deloitte.com/us/en/insights/topics/technology-management/tech-trends.html",
+		"https://www.alizila.com/the-future-of-technology-key-trends-to-watch-in-2025/",
+		"https://www.forbes.com/councils/forbestechcouncil/2025/02/03/top-10-technology-trends-for-2025/",
+		"https://litslink.com/blog/3-most-advanced-ai-systems-overview",
+		"https://theconversation.com/seven-advances-in-technology-that-were-likely-to-see-in-2025-245203",
+		"https://www.sciencedirect.com/science/article/pii/S2773207X24001386",
+		"https://aimagazine.com/technology/top-10-artificial-intelligence-news-websites",
 	}
+	
 
 	fmt.Printf("Starting to fetch titles for %d URLs...\n", len(urls))
 
@@ -212,7 +199,12 @@ func main (){
 		}
 	}
 
-	fmt.Println("Collected Titles: ", collectedWebcontent)
+	for _, webContent := range collectedWebcontent {
+		fmt.Printf("Title: %s\n", webContent.Title)
+		fmt.Printf("Headings: %v\n", webContent.Headings)
+		fmt.Printf("Paragraphs: %v\n", webContent.Paragraphs)
+		fmt.Println("--------------------------------")
+	}
 
 	// Calculate and display timing
 	elapsed := time.Since(startTime)
