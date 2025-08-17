@@ -22,8 +22,8 @@ type Result struct {
 // struct for the web content
 type WebContent struct {
 	Title string
-	Main string
-	Div string
+	Headings []string
+	Paragraphs []string
 }
 
 // worker is a function that fetches the title of a given URL
@@ -77,16 +77,24 @@ func scrapeAboveFold(ctx context.Context, url string) (WebContent, error) {
 	}
 
 	title := strings.TrimSpace(doc.Find("title").First().Text())
-	main := strings.TrimSpace(doc.Find("main").First().Text())
-	div := strings.TrimSpace(doc.Find("div").First().Text())
+	headings := []string{}
+	paragraphs := []string{}
+	
+	doc.Find("h1, h2, h3, h4, h5, h6").Each(func(i int, s *goquery.Selection) {
+		headings = append(headings, strings.TrimSpace(s.Text()))
+	})
+	
+	doc.Find("p").Each(func(i int, s *goquery.Selection) {
+		paragraphs = append(paragraphs, strings.TrimSpace(s.Text()))
+	})
 
 	if title == "" || err != nil {
 		return scrapeWithChromedp(ctx, url)
 	}else{
 		return WebContent{
 			Title: title,
-			Main: main,
-			Div: div,
+			Headings: headings,
+			Paragraphs: paragraphs,
 		}, nil
 	}
 }
@@ -98,12 +106,23 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	var title, mainText, divText string
+	headings := []string{}
+	paragraphs := []string{}
+	
+	var title string
     err := chromedp.Run(ctx,
         chromedp.Navigate(url),
-        chromedp.Text("title", &title, chromedp.NodeVisible, chromedp.ByQuery),
-        chromedp.Text("main", &mainText, chromedp.NodeVisible, chromedp.ByQuery),
-        chromedp.Text("div", &divText, chromedp.NodeVisible, chromedp.ByQuery),
+        chromedp.Text("title", &title, chromedp.NodeVisible),
+        chromedp.Evaluate(`
+            Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+                .map(el => el.textContent.trim())
+                .filter(text => text.length > 0)
+        `, &headings),
+        chromedp.Evaluate(`
+            Array.from(document.querySelectorAll('p'))
+                .map(el => el.textContent.trim())
+                .filter(text => text.length > 0)
+        `, &paragraphs),
     )
 
 	if err != nil {
@@ -112,8 +131,8 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 
 	return WebContent{
 		Title: title,
-		Main: mainText,
-		Div: divText,
+		Headings: headings,
+		Paragraphs: paragraphs,
 	}, nil
 }
 
