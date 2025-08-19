@@ -136,6 +136,11 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 	}, nil
 }
 
+func summarizeContent(webContent WebContent) string {
+	summary := ""
+	
+}
+
 // main is the main function that fetches the titles of the given URLs
 func main (){
 	// Start timing the entire operation
