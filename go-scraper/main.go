@@ -28,8 +28,8 @@ type Result struct {
 // struct for the web content
 type WebContent struct {
 	Title string
-	Headings []string
-	Paragraphs []string
+	Headings string
+	Paragraphs string
 }
 
 // worker is a function that fetches the title of a given URL
@@ -95,13 +95,17 @@ func scrapeAboveFold(ctx context.Context, url string) (WebContent, error) {
 		paragraphs = append(paragraphs, strings.TrimSpace(s.Text()))
 	})
 
+	// convert into string
+	headingsString := strings.Join(headings, "\n")
+	paragraphsString := strings.Join(paragraphs, "\n")
+
 	if title == "" || err != nil {
 		return scrapeWithChromedp(ctx, url)
 	}else{
 		return WebContent{
 			Title: title,
-			Headings: headings,
-			Paragraphs: paragraphs,
+			Headings: headingsString,
+			Paragraphs: paragraphsString,
 		}, nil
 	}
 }
@@ -136,10 +140,14 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 		return WebContent{}, err
 	}
 
+	// convert into string or list of strings
+	headingsString := strings.Join(headings, "\n")
+	paragraphsString := strings.Join(paragraphs, "\n")
+
 	return WebContent{
 		Title: title,
-		Headings: headings,
-		Paragraphs: paragraphs,
+		Headings: headingsString,
+		Paragraphs: paragraphsString,
 	}, nil
 }
 
@@ -148,46 +156,80 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 // it returns a string
 func summarizeContent(webContent WebContent) (string, error) {
 	url := "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+	summarizedContent := ""
 
-	payload := map[string]interface{}{
-		"inputs": webContent.Paragraphs,
-		"parameters": map[string]interface{}{
-			"max_length": 150,
-			"min_length": 30,
-			"length_penalty": 2.0,
-			"num_beams": 4,
-		},
+	// split the content into chunks
+	chunks := splitIntoChunks(webContent.Paragraphs, 5000)
+
+	// summarize each chunk
+	for _, chunk := range chunks {
+		
+		// inputs: the content to summarize (string)
+		// parameters: the parameters for the summarization
+		// max_length: the maximum length of tokens in the summary
+		// min_length: the minimum length of tokens in the summary
+		// length_penalty: the penalty for the length of the summary
+		// num_beams: the number of beams for the summary
+		payload := map[string]interface{}{
+			"inputs": chunk,
+			"parameters": map[string]interface{}{
+				"max_length": 150,
+				"min_length": 30,
+				"length_penalty": 2.0,
+				"num_beams": 4,
+			},
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+
+		// convert the payload to a json string
+		body, _ := json.Marshal(payload)
+
+		request, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+		if err != nil {
+			return "", err
+		}
+
+		// set the headers
+		request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("HF_API_KEY")))
+		request.Header.Set("Content-Type", "application/json")
+
+		response, err := client.Do(request)
+		if err != nil {
+			return "", err
+		}
+
+		fmt.Println("response status: ", response.StatusCode)
+
+		defer response.Body.Close()
+
+		// read the stream of bytes into a string
+		bod, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			return "", err
+		}
+
+		summarizedContent += string(bod)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	fmt.Println("summarizedContent: ", summarizedContent)
 
-	// convert the payload to a json string
-	body, _ := json.Marshal(payload)
+	return summarizedContent, nil
+}
 
-	request, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
-	if err != nil {
-		return "", err
-	}
-
-	// set the headers
-	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("HF_API_KEY")))
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := client.Do(request)
-	if err != nil {
-		return "", err
-	}
-
-	defer response.Body.Close()
-
-	// read the stream of bytes into a string
-	bod, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		return "", err
-	}
-
-	fmt.Println("body: ", string(bod))
-	return string(bod), nil
+// splitIntoChunks is a function that splits the text into chunks of a given size
+// it takes a text and a chunk size as arguments
+// it returns a list of strings
+func splitIntoChunks(text string, chunkSize int) []string {
+    chunks := []string{}
+    for i := 0; i < len(text); i += chunkSize {
+        end := i + chunkSize
+        if end > len(text) {
+            end = len(text)  // Don't go beyond the string length
+        }
+        chunks = append(chunks, text[i:end])
+    }
+    return chunks
 }
 
 // main is the main function that fetches the titles of the given URLs
@@ -206,15 +248,6 @@ func main (){
 	
 	urls := []string{
 		"https://www.mckinsey.com/capabilities/mckinsey-digital/our-insights/the-top-trends-in-tech",
-		"https://www.weforum.org/stories/2025/06/top-10-emerging-technologies-of-2025/",
-		"https://www.simplilearn.com/top-technology-trends-and-jobs-article",
-		"https://www.deloitte.com/us/en/insights/topics/technology-management/tech-trends.html",
-		"https://www.alizila.com/the-future-of-technology-key-trends-to-watch-in-2025/",
-		"https://www.forbes.com/councils/forbestechcouncil/2025/02/03/top-10-technology-trends-for-2025/",
-		"https://litslink.com/blog/3-most-advanced-ai-systems-overview",
-		"https://theconversation.com/seven-advances-in-technology-that-were-likely-to-see-in-2025-245203",
-		"https://www.sciencedirect.com/science/article/pii/S2773207X24001386",
-		"https://aimagazine.com/technology/top-10-artificial-intelligence-news-websites",
 	}
 	
 
