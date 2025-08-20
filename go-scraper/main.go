@@ -9,13 +9,19 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"sync"
 	"github.com/chromedp/chromedp"
+	"io/ioutil"
+	"bytes"
+	"os"
+	"github.com/joho/godotenv"
+	"encoding/json"
+
 
 )
 
 // define a struct to store the results
 type Result struct {
 	URL string
-	WebContent WebContent
+	Summary string
 	Error error
 }
 
@@ -32,10 +38,11 @@ func worker(ctx context.Context, id int, jobs <-chan string, result chan<- Resul
 	defer wg.Done()
 	for url := range jobs {
 		webContent, err := scrapeAboveFold(ctx, url)
+		summary, err := summarizeContent(webContent)
 		if err != nil {
-			result <- Result{URL: url, WebContent: WebContent{}, Error: err}
+			result <- Result{URL: url, Summary: "", Error: err}
 		} else {
-			result <- Result{URL: url, WebContent: webContent, Error: nil}
+			result <- Result{URL: url, Summary: summary, Error: nil}
 		}
 	}
 }
@@ -136,13 +143,64 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 	}, nil
 }
 
-func summarizeContent(webContent WebContent) string {
-	summary := ""
-	
+// summarizeContent is a function that summarizes the content of a given WebContent
+// it takes a WebContent as an argument
+// it returns a string
+func summarizeContent(webContent WebContent) (string, error) {
+	url := "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+
+	payload := map[string]interface{}{
+		"inputs": webContent.Paragraphs,
+		"parameters": map[string]interface{}{
+			"max_length": 150,
+			"min_length": 30,
+			"length_penalty": 2.0,
+			"num_beams": 4,
+		},
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// convert the payload to a json string
+	body, _ := json.Marshal(payload)
+
+	request, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+
+	// set the headers
+	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("HF_API_KEY")))
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+
+	defer response.Body.Close()
+
+	// read the stream of bytes into a string
+	bod, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Println("body: ", string(bod))
+	return string(bod), nil
 }
 
 // main is the main function that fetches the titles of the given URLs
 func main (){
+
+	// load the environment variables
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Println("Error loading .env file")
+	}
+
+	fmt.Println("os.Getenv(\"HF_API_KEY\"): ", os.Getenv("HF_API_KEY"))
+
 	// Start timing the entire operation
 	startTime := time.Now()
 	
@@ -193,21 +251,19 @@ func main (){
 		close(results)
 	}()
     
-	collectedWebcontent := []WebContent{}
+	collectedWebcontent := []string{}
 
 	// iterate over the channel and collect results until it is closed (when all goroutines are done)
 	for res := range results {
 		if res.Error != nil {
 			fmt.Printf("Error fetching title for %s: %v\n", res.URL, res.Error)
 		}else{
-			collectedWebcontent = append(collectedWebcontent, res.WebContent)
+			collectedWebcontent = append(collectedWebcontent, res.Summary)
 		}
 	}
 
-	for _, webContent := range collectedWebcontent {
-		fmt.Printf("Title: %s\n", webContent.Title)
-		fmt.Printf("Headings: %v\n", webContent.Headings)
-		fmt.Printf("Paragraphs: %v\n", webContent.Paragraphs)
+	for _, summary := range collectedWebcontent {
+		fmt.Printf("Summary: %s\n", summary)
 		fmt.Println("--------------------------------")
 	}
 
