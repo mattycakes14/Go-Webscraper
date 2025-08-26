@@ -14,8 +14,6 @@ import (
 	"os"
 	"github.com/joho/godotenv"
 	"encoding/json"
-
-
 )
 
 // define a struct to store the results
@@ -156,81 +154,67 @@ func scrapeWithChromedp(ctx context.Context, url string) (WebContent, error) {
 // it returns a string
 func summarizeContent(webContent WebContent) (string, error) {
 	url := "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+	
 	summarizedContent := ""
 
-	// split the content into chunks
-	chunks := splitIntoChunks(webContent.Paragraphs, 5000)
+	  // Rough estimation: 1 token ≈ 4 characters for English text
+	  maxChars := 1024 * 4 // ~4096 characters
+	  if len(webContent.Paragraphs) > maxChars {
+		  webContent.Paragraphs = webContent.Paragraphs[:maxChars]
+	  }
 
-	// summarize each chunk
-	for _, chunk := range chunks {
-		
-		// inputs: the content to summarize (string)
-		// parameters: the parameters for the summarization
-		// max_length: the maximum length of tokens in the summary
-		// min_length: the minimum length of tokens in the summary
-		// length_penalty: the penalty for the length of the summary
-		// num_beams: the number of beams for the summary
-		payload := map[string]interface{}{
-			"inputs": chunk,
-			"parameters": map[string]interface{}{
-				"max_length": 150,
-				"min_length": 30,
-				"length_penalty": 2.0,
-				"num_beams": 4,
-			},
-		}
-
-		client := &http.Client{Timeout: 10 * time.Second}
-
-		// convert the payload to a json string
-		body, _ := json.Marshal(payload)
-
-		request, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
-		if err != nil {
-			return "", err
-		}
-
-		// set the headers
-		request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("HF_API_KEY")))
-		request.Header.Set("Content-Type", "application/json")
-
-		response, err := client.Do(request)
-		if err != nil {
-			return "", err
-		}
-
-		fmt.Println("response status: ", response.StatusCode)
-
-		defer response.Body.Close()
-
-		// read the stream of bytes into a string
-		bod, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			return "", err
-		}
-
-		summarizedContent += string(bod)
+	fmt.Println("webContent.Paragraphs condensed: ", webContent.Paragraphs)
+	// summarize the content
+	// inputs: the content to summarize (string)
+	// parameters: the parameters for the summarization
+	// max_length: the maximum length of tokens in the summary
+	// min_length: the minimum length of tokens in the summary
+	// length_penalty: the penalty for the length of the summary
+	// num_beams: the number of beams for the summary
+	payload := map[string]interface{}{
+		"inputs": webContent.Paragraphs,
+		"parameters": map[string]interface{}{
+			"max_length": 500,
+			"min_length": 100,
+			"length_penalty": 2.0,
+			"num_beams": 4,
+		},
 	}
 
-	fmt.Println("summarizedContent: ", summarizedContent)
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	// convert the payload to a json string
+	body, _ := json.Marshal(payload)
+
+	request, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+
+	// set the headers
+	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", os.Getenv("HF_API_KEY")))
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+
+	fmt.Println("response status: ", response.StatusCode)
+
+	defer response.Body.Close()
+
+	// read the stream of bytes into a string
+	bod, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return "", err
+	}
+
+	summarizedContent = string(bod)
 
 	return summarizedContent, nil
 }
 
-// splitIntoChunks is a function that splits the text into chunks of a given size
-// it takes a text and a chunk size as arguments
-// it returns a list of strings
-func splitIntoChunks(text string, chunkSize int) []string {
-    chunks := []string{}
-    for i := 0; i < len(text); i += chunkSize {
-        end := i + chunkSize
-        if end > len(text) {
-            end = len(text)  // Don't go beyond the string length
-        }
-        chunks = append(chunks, text[i:end])
-    }
-    return chunks
-}
 
 // main is the main function that fetches the titles of the given URLs
 func main (){
@@ -247,7 +231,8 @@ func main (){
 	startTime := time.Now()
 	
 	urls := []string{
-		"https://www.mckinsey.com/capabilities/mckinsey-digital/our-insights/the-top-trends-in-tech",
+		"https://medium.com/@cliceleee/google-solution-challenge-top-3-winning-strategies-praised-by-the-country-director-of-google-korea-f5496f70e910",
+		"https://medium.com/very-personal-growth/ai-therapy-how-to-tell-if-your-therapist-isnt-human-77c1e689e87c",
 	}
 	
 
