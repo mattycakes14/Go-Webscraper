@@ -30,6 +30,45 @@ type WebContent struct {
 	Paragraphs string
 }
 
+// Notion API structures
+type NotionPageRequest struct {
+	Parent     NotionParent     `json:"parent"`
+	Properties NotionProperties `json:"properties"`
+	Children   []NotionBlock    `json:"children,omitempty"`
+}
+
+type NotionParent struct {
+	Type       string `json:"type"`
+	PageID     string `json:"page_id,omitempty"`
+	DatabaseID string `json:"database_id,omitempty"`
+}
+
+type NotionProperties struct {
+	Title NotionTitle `json:"title"`
+}
+
+type NotionTitle struct {
+	Title []NotionText `json:"title"`
+}
+
+type NotionText struct {
+	Text NotionTextContent `json:"text"`
+}
+
+type NotionTextContent struct {
+	Content string `json:"content"`
+}
+
+type NotionBlock struct {
+	Object     string           `json:"object"`
+	Type       string           `json:"type"`
+	Paragraph  NotionParagraph  `json:"paragraph,omitempty"`
+}
+
+type NotionParagraph struct {
+	RichText []NotionText `json:"rich_text"`
+}
+
 // worker is a function that fetches the title of a given URL
 func worker(ctx context.Context, id int, jobs <-chan string, result chan<- Result, wg *sync.WaitGroup) {
 	// decrement the wait group
@@ -50,8 +89,8 @@ func worker(ctx context.Context, id int, jobs <-chan string, result chan<- Resul
 // it returns a string and an error
 func scrapeAboveFold(ctx context.Context, url string) (WebContent, error) {
 
-	// create a HTTP server that cancels request after 10 sec
-	client := &http.Client{Timeout: 10 * time.Second}
+	// create a HTTP server that cancels request after 30 sec
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// make a request with context
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -157,13 +196,16 @@ func summarizeContent(webContent WebContent) (string, error) {
 	
 	summarizedContent := ""
 
-	  // Rough estimation: 1 token ≈ 4 characters for English text
-	  maxChars := 1024 * 4 // ~4096 characters
-	  if len(webContent.Paragraphs) > maxChars {
-		  webContent.Paragraphs = webContent.Paragraphs[:maxChars]
-	  }
+	  	// Combine headings and paragraphs for maximum content utilization
+	combinedContent := webContent.Headings + "\n\n" + webContent.Paragraphs
+	
+	// Truncate to stay within 1024 token limit (rough approximation)
+	maxChars := 1024 * 4 // ~4096 characters
+	if len(combinedContent) > maxChars {
+		combinedContent = combinedContent[:maxChars]
+	}
 
-	fmt.Println("webContent.Paragraphs condensed: ", webContent.Paragraphs)
+	fmt.Printf("Combined content length: %d chars\n", len(combinedContent))
 	// summarize the content
 	// inputs: the content to summarize (string)
 	// parameters: the parameters for the summarization
@@ -172,7 +214,7 @@ func summarizeContent(webContent WebContent) (string, error) {
 	// length_penalty: the penalty for the length of the summary
 	// num_beams: the number of beams for the summary
 	payload := map[string]interface{}{
-		"inputs": webContent.Paragraphs,
+		"inputs": combinedContent,
 		"parameters": map[string]interface{}{
 			"max_length": 500,
 			"min_length": 100,
@@ -181,7 +223,7 @@ func summarizeContent(webContent WebContent) (string, error) {
 		},
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// convert the payload to a json string
 	body, _ := json.Marshal(payload)
@@ -215,6 +257,93 @@ func summarizeContent(webContent WebContent) (string, error) {
 	return summarizedContent, nil
 }
 
+// createNotionPage creates a new page in Notion under a parent page
+func createNotionPage(title, content, parentPageID string) error {
+	url := "https://api.notion.com/v1/pages"
+	
+	// Split content into paragraphs for better formatting
+	paragraphs := strings.Split(content, "\n")
+	var children []NotionBlock
+	
+	// Create content blocks
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph != "" {
+			children = append(children, NotionBlock{
+				Object: "block",
+				Type:   "paragraph",
+				Paragraph: NotionParagraph{
+					RichText: []NotionText{
+						{
+							Text: NotionTextContent{
+								Content: paragraph,
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+	
+	// Create the page request
+	pageRequest := NotionPageRequest{
+		Parent: NotionParent{
+			Type:   "page_id",
+			PageID: parentPageID,
+		},
+		Properties: NotionProperties{
+			Title: NotionTitle{
+				Title: []NotionText{
+					{
+						Text: NotionTextContent{
+							Content: title,
+						},
+					},
+				},
+			},
+		},
+		Children: children,
+	}
+
+	// Convert to JSON
+	body, err := json.Marshal(pageRequest)
+	if err != nil {
+		return fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("NOTION_API_KEY"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Notion-Version", "2022-06-28")
+
+	// Make request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("error reading response: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
+	}
+
+	fmt.Printf("Successfully created Notion page: %s\n", title)
+	return nil
+}
+
 
 // main is the main function that fetches the titles of the given URLs
 func main (){
@@ -225,14 +354,13 @@ func main (){
 		fmt.Println("Error loading .env file")
 	}
 
-	fmt.Println("os.Getenv(\"HF_API_KEY\"): ", os.Getenv("HF_API_KEY"))
-
 	// Start timing the entire operation
 	startTime := time.Now()
 	
 	urls := []string{
-		"https://medium.com/@cliceleee/google-solution-challenge-top-3-winning-strategies-praised-by-the-country-director-of-google-korea-f5496f70e910",
-		"https://medium.com/very-personal-growth/ai-therapy-how-to-tell-if-your-therapist-isnt-human-77c1e689e87c",
+		"https://www.edmtunes.com/2025/08/spotify-plans-to-increase-their-prices-once-again/",
+		"https://medium.engineering/engineering-growth-at-medium-4935b3234d25",
+		"https://medium.engineering/engineering-growth-at-medium-4935b3234d25",
 	}
 	
 
@@ -242,14 +370,14 @@ func main (){
 	var wg sync.WaitGroup
 
 	// create a context with timeout
-    ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
 	// create a channel to receive results + working pool
 	results := make(chan Result, len(urls))
 	jobs := make(chan string, len(urls))
 
-	numWorkers := 10
+	numWorkers := 5
 
 	//start the pool of 10 workers
 	for w := 1; w <= numWorkers; w++ {
@@ -281,7 +409,28 @@ func main (){
 	}
 
 	for _, summary := range collectedWebcontent {
-		fmt.Printf("Summary: %s\n", summary)
+		
+		// 1. Parse the JSON string into a Go structure
+		var summaryData []map[string]interface{}
+		if err := json.Unmarshal([]byte(summary), &summaryData); err != nil {
+			fmt.Printf("Error parsing JSON: %v\n", err)
+			fmt.Printf("Raw response: %s\n", summary)
+		} else if len(summaryData) > 0 {
+			// 2. Access the first element and the summary_text field
+			if summaryText, ok := summaryData[0]["summary_text"].(string); ok {
+				fmt.Printf("Summary: %s\n", summaryText)
+				
+				// 3. Create Notion page with the summary
+				title := "Web Summary - " + time.Now().Format("2006-01-02 15:04:05")
+				parentPageID := os.Getenv("NOTION_PARENT_PAGE_ID")
+				
+				if err := createNotionPage(title, summaryText, parentPageID); err != nil {
+					fmt.Printf("Error creating Notion page: %v\n", err)
+				}
+			} else {
+				fmt.Printf("Error: summary_text not found\n")
+			}
+		}
 		fmt.Println("--------------------------------")
 	}
 
