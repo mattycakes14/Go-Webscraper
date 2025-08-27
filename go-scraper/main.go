@@ -258,14 +258,17 @@ func summarizeContent(webContent WebContent) (string, error) {
 }
 
 // createNotionPage creates a new page in Notion under a parent page
-func createNotionPage(title, content, parentPageID string) error {
+func createNotionPage(title, content, parentPageID string) (string, error) {
+	// POST endpoint to create a new page
 	url := "https://api.notion.com/v1/pages"
 	
 	// Split content into paragraphs for better formatting
 	paragraphs := strings.Split(content, "\n")
+	
+	// Create a list of children blocks (paragraphs)
 	var children []NotionBlock
 	
-	// Create content blocks
+	// Create content blocks for each line of the paragrahs 
 	for _, paragraph := range paragraphs {
 		paragraph = strings.TrimSpace(paragraph)
 		if paragraph != "" {
@@ -308,13 +311,13 @@ func createNotionPage(title, content, parentPageID string) error {
 	// Convert to JSON
 	body, err := json.Marshal(pageRequest)
 	if err != nil {
-		return fmt.Errorf("error marshaling request: %v", err)
+		return "", fmt.Errorf("error marshaling request: %v", err)
 	}
 
 	// Create HTTP request
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
 	if err != nil {
-		return fmt.Errorf("error creating request: %v", err)
+		return "", fmt.Errorf("error creating request: %v", err)
 	}
 
 	// Set headers
@@ -326,22 +329,105 @@ func createNotionPage(title, content, parentPageID string) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("error making request: %v", err)
+		return "", fmt.Errorf("error making request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	// Read response
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("error reading response: %v", err)
+		return "", fmt.Errorf("error reading response: %v", err)
 	}
 
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
+		return "", fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
 	}
 
-	fmt.Printf("Successfully created Notion page: %s\n", title)
-	return nil
+	// Parse response to get the page ID
+	var pageResponse map[string]interface{}
+	if err := json.Unmarshal(respBody, &pageResponse); err != nil {
+		return "", fmt.Errorf("error parsing response: %v", err)
+	}
+
+	pageID, ok := pageResponse["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("could not get page ID from response")
+	}
+
+	fmt.Printf("Successfully created Notion page: %s (ID: %s)\n", title, pageID)
+	return pageID, nil
+}
+
+// appendToNotionPage appends content to an existing Notion page
+func appendToNotionPage(pageID, content string) (string, error) {
+	url := fmt.Sprintf("https://api.notion.com/v1/blocks/%s/children", pageID)
+
+	// Split content into paragraphs for better formatting
+	paragraphs := strings.Split(content, "\n")
+	var children []NotionBlock
+	
+	// Create content blocks 
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph != "" {
+			children = append(children, NotionBlock{
+				Object: "block",
+				Type:   "paragraph",
+				Paragraph: NotionParagraph{
+					RichText: []NotionText{
+						{
+							Text: NotionTextContent{
+								Content: paragraph,
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+	
+	// Create the append request
+	appendRequest := map[string]interface{}{
+		"children": children,
+	}
+
+	// Convert to JSON
+	body, err := json.Marshal(appendRequest)
+	if err != nil {
+		return "", fmt.Errorf("error marshaling request: %v", err)
+	}
+
+	// Create HTTP request
+	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(body))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %v", err)
+	}
+
+	// Set headers
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("NOTION_API_KEY"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Notion-Version", "2022-06-28")
+
+	// Make request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error making request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading response: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("API error: %s - %s", resp.Status, string(respBody))
+	}
+
+	fmt.Printf("Successfully appended content to page: %s\n", pageID)
+	return pageID, nil
 }
 
 
@@ -408,25 +494,44 @@ func main (){
 		}
 	}
 
-	for _, summary := range collectedWebcontent {
-		
+	// Create one Notion page for all summaries
+	pageTitle := "Article Summaries - " + time.Now().Format("2006-01-02 15:04:05")
+	parentPageID := os.Getenv("NOTION_PARENT_PAGE_ID")
+	
+	// Create the initial content for the page
+	initialContent := "# Summarized Web Content\n\n This contains the summarized web content of the URLs that were scraped :)\n"
+	
+	createdPageID, err := createNotionPage(pageTitle, initialContent, parentPageID)
+	if err != nil {
+		fmt.Printf("Error creating Notion page: %v\n", err)
+		return
+	}
+	
+	// Process each summary and append to the page
+	for i, summary := range collectedWebcontent {
 		// 1. Parse the JSON string into a Go structure
 		var summaryData []map[string]interface{}
 		if err := json.Unmarshal([]byte(summary), &summaryData); err != nil {
 			fmt.Printf("Error parsing JSON: %v\n", err)
 			fmt.Printf("Raw response: %s\n", summary)
-		} else if len(summaryData) > 0 {
+			continue
+		} 
+		
+		if len(summaryData) > 0 {
 			// 2. Access the first element and the summary_text field
 			if summaryText, ok := summaryData[0]["summary_text"].(string); ok {
-				fmt.Printf("Summary: %s\n", summaryText)
+				fmt.Printf("Summary %d: %s\n", i+1, summaryText[:100]+"...")
 				
-				// 3. Create Notion page with the summary
-				title := "Web Summary - " + time.Now().Format("2006-01-02 15:04:05")
-				parentPageID := os.Getenv("NOTION_PARENT_PAGE_ID")
+				// 3. Format the summary with a header
+				formattedContent := fmt.Sprintf("## Summary %d\n\n%s\n\n---\n\n", i+1, summaryText)
 				
-				if err := createNotionPage(title, summaryText, parentPageID); err != nil {
-					fmt.Printf("Error creating Notion page: %v\n", err)
+				// 4. Append to the Notion page
+				if _, err := appendToNotionPage(createdPageID, formattedContent); err != nil {
+					fmt.Printf("Error appending to Notion page: %v\n", err)
 				}
+				
+				// Small delay to avoid rate limiting
+				time.Sleep(500 * time.Millisecond)
 			} else {
 				fmt.Printf("Error: summary_text not found\n")
 			}
